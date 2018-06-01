@@ -8,9 +8,9 @@ import PIL
 from PIL import Image
 
 # Processing parameters
-SIZE = 64  # for ImageNet models compatibility
-TEST_DIR = 'images_test/'
-TRAIN_DIR = 'images_train/'
+SIZE = 96  # for ImageNet models compatibility
+TEST_DIR = 'data128/test'
+TRAIN_DIR = 'data128/train'
 BASE_DIR = '.'
 
 
@@ -65,7 +65,7 @@ def resize_image(img, size):
         n_x_new = size
         n_y_new = int(size * n_y / n_x + 0.5)
 
-    img_res = img.resize((n_x_new, n_y_new), resample=PIL.Image.BICUBIC)
+    img_res = img.resize((n_x_new, n_y_new), resample=PIL.Image.LANCZOS)
 
     # Pad the borders to create a square image
     img_pad = Image.new('RGB', (size, size), (128, 128, 128))
