@@ -8,6 +8,7 @@ from PIL import Image
 
 zed = 100
 OUT_DIR = 'out/imgs' 
+samples_z_const = np.random.normal(0., 0., (100, zed))
 
 def load_images(filepath):
     image_list = []
@@ -29,57 +30,16 @@ def get_batch(X_train, datagen, batch_size, length):
     return minibatch
     #minibatch = minibatch[0]
 
-
-def autoscaler(img):
-    limit = 400.
-    # scales = [0.1,0.125,1./6.,0.2,0.25,1./3.,1./2.] + range(100)
-    scales = np.hstack([1./np.linspace(10,2,num=9), np.linspace(1,100,num=100)])
-
-    imgscale = limit/float(img.shape[0])
-    for s in scales:
-        if s>=imgscale:
-            imgscale=s
-            break
-
-    img = cv2.resize(img,dsize=(int(img.shape[1]*imgscale),int(img.shape[0]*imgscale)),interpolation=cv2.INTER_NEAREST)
-
-    return img,imgscale
-
-def flatten_multiple_image_into_image(arr):
-    num,uh,uw,_ = arr.shape
-
-    patches = int(num+1)
-    height = int(math.sqrt(patches)*0.9)
-    width = int(patches/height+1)
-
-    img = np.zeros((height*uh+height, width*uw+width, 3),dtype='float32')
-
-    index = 0
-    for row in range(height):
-        for col in range(width):
-            if index>=num-1:
-                break
-            channels = arr[index]
-            img[row*uh+row:row*uh+uh+row,col*uw+col:col*uw+uw+col,:] = channels
-            index+=1
-
-    img,imgscale = autoscaler(img)
-
-    return img,imgscale
-
-
-samples_z1 = np.random.normal(0., 1., (100, zed))
-
 def show(count, gm, input_shape, num_samples, save=True):
     samples_z = np.random.normal(0., 1., (num_samples, zed))
     generated_images = gm.predict([samples_z])
-    generated_images_same = gm.predict([samples_z1])
+    generated_images_const = gm.predict([samples_z_const])
 
     #rescale_images
     generated_images += 1
     generated_images /= 2
-    generated_images_same += 1
-    generated_images_same /= 2
+    generated_images_const += 1
+    generated_images_const /= 2
 
     rr = []
     for c in range(10):
@@ -91,13 +51,13 @@ def show(count, gm, input_shape, num_samples, save=True):
     rr1 = []
     for c in range(10):
         rr1.append(
-            np.concatenate(generated_images_same[c * 10:(1 + c) * 10]).reshape(
+            np.concatenate(generated_images_const[c * 10:(1 + c) * 10]).reshape(
                 input_shape[0] * 10, input_shape[1], 3))
     img_same = np.hstack(rr1)
     if save:
         plt.imshow(img)
         plt.imsave(OUT_DIR + '/samples_real_%07d.png' % count, img)
-        plt.imsave('out/same' + '/samples_real_%07d.png' % count, img_same)
+        plt.imsave('out/const' + '/samples_real_%07d.png' % count, img_same)
         count += 1
 
     return img
