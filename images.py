@@ -17,7 +17,8 @@ def load_images(filepath):
 
     X_train = np.asarray(image_list, dtype='float32')
     X_train /= 255
-
+    X_train *= 2
+    X_train -= 1
     np.random.shuffle(X_train)
     return X_train
     
@@ -73,7 +74,12 @@ def show(count, gm, input_shape, num_samples, save=True):
     samples_z = np.random.normal(0., 1., (num_samples, zed))
     generated_images = gm.predict([samples_z])
     generated_images_same = gm.predict([samples_z1])
-    print(generated_images.shape)
+
+    #rescale_images
+    generated_images += 1
+    generated_images /= 2
+    generated_images_same += 1
+    generated_images_same /= 2
 
     rr = []
     for c in range(10):
