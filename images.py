@@ -30,7 +30,7 @@ def get_batch(X_train, datagen, batch_size, length):
     return minibatch
     #minibatch = minibatch[0]
 
-def show(count, gm, input_shape, num_samples, save=True):
+def show(count, gm, num_samples, input_shape, save=True):
     samples_z = np.random.normal(0., 1., (num_samples, zed))
     generated_images = gm.predict([samples_z])
     generated_images_const = gm.predict([samples_z_const])

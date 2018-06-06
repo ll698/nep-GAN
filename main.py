@@ -6,8 +6,8 @@ import numpy as np
 from keras.preprocessing.image import ImageDataGenerator
 import keras.backend as K
 
-INPUT_SHAPE = (96,96,3)
-FPATH = 'data96/train/*.jpg'
+INPUT_SHAPE = (64,64,3)
+FPATH = 'data/data64/train/*.jpg'
 batch_size = 100
 ep=100000
 zed=1024

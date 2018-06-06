@@ -36,7 +36,7 @@ def residual_cell(input):
     x = add([input, x])
     return x
 
-def gen(input_shape, f, batch_size): # generative network, 2
+def gen(input_shape, f, batch_size, upsampling=True): # generative network, 2
     s = input_shape[1]
     start_dim = int(s / 16)
     nb_upconv = 4
@@ -49,30 +49,44 @@ def gen(input_shape, f, batch_size): # generative network, 2
     x = BatchNormalization(axis=-1)(x)
     x = Activation("relu")(x)
 
-    # Transposed conv blocks
-    for i in range(nb_upconv):
-        # if i < 2:
-        nb_filters = int(f / (2 ** (i + 1)))
-        s = start_dim * (2 ** (i + 1))
-        o_shape = (batch_size, s, s, nb_filters)
-        x = Deconv2D(nb_filters, (3, 3), output_shape=o_shape, strides=(2, 2), padding="same")(x)
-        x = BatchNormalization(axis=-1)(x)
-        x = Activation("relu")(x)
-        # else:
-        #     x = UpSampling2D(size=(2, 2))(x)
-        #     nb_filters = int(f / (2 ** (i + 1)))
-        #     x = Conv2D(nb_filters, (3, 3), padding="same")(x)
-        #     x = BatchNormalization(axis=1)(x)
-        #     x = Activation("relu")(x)
-        #     x = Conv2D(nb_filters, (3, 3), padding="same")(x)
-        #     x = Activation("relu")(x)
+    if upsampling:
+            # Upscaling blocks: Upsampling2D->Conv2D->ReLU->BN->Conv2D->ReLU
+        for i in range(nb_upconv):
+            x = UpSampling2D(size=(2, 2))(x)
+            nb_filters = int(f / (2 ** (i + 1)))
+            x = Conv2D(nb_filters, (3, 3), padding="same", kernel_initializer=RandomNormal(stddev=0.02))(x)
+            x = BatchNormalization(axis=1)(x)
+            x = Activation("relu")(x)
+            x = Conv2D(nb_filters, (3, 3), padding="same", kernel_initializer=RandomNormal(stddev=0.02))(x)
+            x = Activation("relu")(x)
 
-    # Last block
-    s = start_dim * (2 ** (nb_upconv))
-    o_shape = (batch_size, s, s, output_channels)
-    x = Deconv2D(output_channels, (3, 3), output_shape=o_shape, strides=(2, 2), padding="same")(x)
-    #x = Conv2D(output_channels, (3, 3), name="gen_Conv2D_final", padding="same", activation='tanh')(x)
+        # Last block
+        x = Conv2D(output_channels, (3, 3), name="gen_conv2d_final",
+                padding="same", activation='tanh', kernel_initializer=RandomNormal(stddev=0.02))(x)
 
+
+    else:
+        for i in range(nb_upconv - 1):
+            nb_filters = int(f / (2 ** (i + 1)))
+            s = start_dim * (2 ** (i + 1))
+            o_shape = (batch_size, s, s, nb_filters)
+            x = Deconv2D(nb_filters, (3, 3),
+                            output_shape=o_shape, strides=(2, 2),
+                            padding="same", use_bias=False,
+                            kernel_initializer=RandomNormal(stddev=0.02))(x)
+            x = BatchNormalization(axis=-1)(x)
+            x = Activation("relu")(x)
+
+        # Last block
+        s = start_dim * (2 ** (nb_upconv))
+        o_shape = (batch_size, s, s, output_channels)
+        x = Deconv2D(output_channels, (3, 3),
+                        output_shape=o_shape, strides=(2, 2),
+                        padding="same", use_bias=False,
+                        kernel_initializer=RandomNormal(stddev=0.02))(x)
+        x = Activation("tanh")(x)
+
+   
     #Residual cell
     shortcut = x
 
