@@ -25,11 +25,11 @@ def concat_diff(i): # batch discrimination -  increase generation diversity.
 
 
 def residual_cell(input):
-    x = Conv2D(input.shape, kernel_size=(3, 3), strides=(1,1), padding='same')(x)
+    x = Conv2D(3, kernel_size=(3, 3), strides=(1,1), padding='same')(input)
     x = BatchNormalization(axis=-1)(x)
     x = LeakyReLU(0.2)(x)
 
-    x = Conv2D(input.shape, kernel_size=(3, 3), strides=(1, 1), padding='same')(x)
+    x = Conv2D(3, kernel_size=(3, 3), strides=(1, 1), padding='same')(x)
     x = BatchNormalization(axis=-1)(x)
     x = LeakyReLU(0.2)(x)
 
