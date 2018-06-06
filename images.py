@@ -28,7 +28,6 @@ def get_batch(X_train, datagen, batch_size, length):
     minibatch = datagen.flow(X_train,batch_size = batch_size)
     print(minibatch.size)
     return minibatch
-    
     #minibatch = minibatch[0]
 
 def show(count, gm, input_shape, num_samples, save=True):
