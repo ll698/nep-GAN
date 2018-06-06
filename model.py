@@ -15,8 +15,7 @@ import keras.backend as K
 
 import numpy as np
 
-zed = 100
-INPUT_SHAPE = (96,96,3)
+zed = 1024
 
 def concat_diff(i): # batch discrimination -  increase generation diversity.
     # return i
@@ -24,12 +23,25 @@ def concat_diff(i): # batch discrimination -  increase generation diversity.
     i = merge([i,bv],mode='concat')
     return i
 
+
+def residual_cell(input):
+    x = Conv2D(input.shape, kernel_size=(3, 3), strides=(1,1), padding='same')(x)
+    x = BatchNormalization(axis=-1)(x)
+    x = LeakyReLU(0.2)(x)
+
+    x = Conv2D(input.shape, kernel_size=(3, 3), strides=(1, 1), padding='same')(x)
+    x = BatchNormalization(axis=-1)(x)
+    x = LeakyReLU(0.2)(x)
+
+    x = add([input, x])
+    return x
+
 def gen(input_shape, f, batch_size): # generative network, 2
     s = input_shape[1]
     start_dim = int(s / 16)
     nb_upconv = 4
 
-    output_channels = INPUT_SHAPE[-1]
+    output_channels = input_shape[-1]
 
     gen_input = Input(shape=(zed,), name="generator_input")
     x = Dense(f * start_dim * start_dim, input_dim=zed)(gen_input)
@@ -39,33 +51,30 @@ def gen(input_shape, f, batch_size): # generative network, 2
 
     # Transposed conv blocks
     for i in range(nb_upconv):
-        if i < 2:
-            nb_filters = int(f / (2 ** (i + 1)))
-            s = start_dim * (2 ** (i + 1))
-            o_shape = (batch_size, s, s, nb_filters)
-            x = Deconv2D(nb_filters, (3, 3), output_shape=o_shape, strides=(2, 2), padding="same")(x)
-            x = BatchNormalization(axis=-1)(x)
-            x = Activation("relu")(x)
-        else:
-            x = UpSampling2D(size=(2, 2))(x)
-            nb_filters = int(f / (2 ** (i + 1)))
-            x = Conv2D(nb_filters, (3, 3), padding="same")(x)
-            x = BatchNormalization(axis=1)(x)
-            x = Activation("relu")(x)
-            x = Conv2D(nb_filters, (3, 3), padding="same")(x)
-            x = Activation("relu")(x)
+        # if i < 2:
+        nb_filters = int(f / (2 ** (i + 1)))
+        s = start_dim * (2 ** (i + 1))
+        o_shape = (batch_size, s, s, nb_filters)
+        x = Deconv2D(nb_filters, (3, 3), output_shape=o_shape, strides=(2, 2), padding="same")(x)
+        x = BatchNormalization(axis=-1)(x)
+        x = Activation("relu")(x)
+        # else:
+        #     x = UpSampling2D(size=(2, 2))(x)
+        #     nb_filters = int(f / (2 ** (i + 1)))
+        #     x = Conv2D(nb_filters, (3, 3), padding="same")(x)
+        #     x = BatchNormalization(axis=1)(x)
+        #     x = Activation("relu")(x)
+        #     x = Conv2D(nb_filters, (3, 3), padding="same")(x)
+        #     x = Activation("relu")(x)
 
     # Last block
-    # s = start_dim * (2 ** (nb_upconv))
-    # o_shape = (batch_size, s, s, output_channels)
-    # x = Deconv2D(output_channels, (3, 3), output_shape=o_shape, strides=(2, 2), padding="same")(x)
-    x = Conv2D(output_channels, (3, 3), name="gen_Conv2D_final", padding="same", activation='tanh')(x)
+    s = start_dim * (2 ** (nb_upconv))
+    o_shape = (batch_size, s, s, output_channels)
+    x = Deconv2D(output_channels, (3, 3), output_shape=o_shape, strides=(2, 2), padding="same")(x)
+    #x = Conv2D(output_channels, (3, 3), name="gen_Conv2D_final", padding="same", activation='tanh')(x)
 
     #Residual cell
     shortcut = x
-    x = Conv2D(output_channels, kernel_size=(3, 3), strides=(1,1), padding='same')(x)
-    x = BatchNormalization(axis=-1)(x)
-    x = LeakyReLU(0.2)(x)
 
     x = Conv2D(output_channels, kernel_size=(3, 3), strides=(1, 1), padding='same')(x)
     x = BatchNormalization(axis=-1)(x)
@@ -76,7 +85,24 @@ def gen(input_shape, f, batch_size): # generative network, 2
 
     generator_model = Model(inputs=[gen_input], outputs=[x], name='G')
     return generator_model
-   
+
+
+
+def upsample_gen(input_shape):
+
+    gen_input = Input(shape=input_shape, name="generator_input")
+    x = UpSampling2D(size=(2, 2))(gen_input)
+    x = Conv2D(3, (3, 3), padding="same")(x)
+    x = BatchNormalization(axis=1)(x)
+    x = LeakyReLU(0.2)(x)
+    x = residual_cell(x)
+    x = residual_cell(x)
+    x = Conv2D(3, (3, 3), name="gen_Conv2D_final", padding="same", activation='tanh')(x)
+    upsample_model = Model(inputs=[gen_input], outputs=[x], name='U')
+    return upsample_model
+
+    
+
 def dis(input_shape): # discriminative network, 2
     img_dim = input_shape
     bn_axis = -1
