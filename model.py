@@ -1,62 +1,22 @@
-import os
 
-import matplotlib.pyplot as plt
+from __future__ import print_function
+
+import tkinter
+import tensorflow as tf
 
 
-import keras.backend as K
-from keras.datasets import mnist, cifar10
-from keras.layers import *
 from keras.models import *
-from keras.optimizers import *
+from keras.layers import *
 from keras.initializers import *
-from keras.callbacks import *
-from keras.utils.generic_utils import Progbar
-from PIL import Image
-import glob
-from random import randint
+from keras.optimizers import *
+from keras.utils import np_utils
+import keras
+import keras.backend as K
 
+import numpy as np
 
-RND = 1337
-
-RUN = 'F'
-OUT_DIR = 'out/' + RUN
-TENSORBOARD_DIR = RUN
-
-# GPU # 
-GPU = "1"
-
-# latent vector size
-Z_SIZE = 100
-
-# number of iterations D is trained for per each G iteration
-D_ITERS = 20
-G_ITERS = 5
-
-BATCH_SIZE = 64
-ITERATIONS = 1000
-
-np.random.seed(RND)
-
-if not os.path.isdir(OUT_DIR): os.makedirs(OUT_DIR)
-
-K.set_image_dim_ordering('tf')
-
-print("loading data")
-#load in data
-image_list = []
-for filename in glob.glob('data128/train/*.jpg'): #assuming gif
-    im=Image.open(filename)
-    image_list.append(np.array(im, dtype='float32'))
-
-X_train = np.asarray(image_list, dtype='float32')
-X_train /= 255.0
-
-
-
-# basically return mean(y_pred),
-# but with ability to inverse it for minimization (when y_true == -1)
-def wasserstein(y_true, y_pred):
-    return K.mean(y_true * y_pred)
+zed = 100
+INPUT_SHAPE = (96,96,3)
 
 def concat_diff(i): # batch discrimination -  increase generation diversity.
     # return i
@@ -64,255 +24,169 @@ def concat_diff(i): # batch discrimination -  increase generation diversity.
     i = merge([i,bv],mode='concat')
     return i
 
+def gen(input_shape, f, batch_size): # generative network, 2
+    s = input_shape[1]
+    start_dim = int(s / 16)
+    nb_upconv = 4
 
-def create_D():
+    output_channels = INPUT_SHAPE[-1]
 
-    # # weights are initlaized from normal distribution with below params
-    # weight_init = RandomNormal(mean=0., stddev=0.02)
+    gen_input = Input(shape=(zed,), name="generator_input")
+    x = Dense(f * start_dim * start_dim, input_dim=zed)(gen_input)
+    x = Reshape((start_dim, start_dim, f))(x)
+    x = BatchNormalization(axis=-1)(x)
+    x = Activation("relu")(x)
 
-    # input_image = Input(shape=(128, 128, 3), name='input_image')
+    # Transposed conv blocks
+    for i in range(nb_upconv):
+        if i < 2:
+            nb_filters = int(f / (2 ** (i + 1)))
+            s = start_dim * (2 ** (i + 1))
+            o_shape = (batch_size, s, s, nb_filters)
+            x = Deconv2D(nb_filters, (3, 3), output_shape=o_shape, strides=(2, 2), padding="same")(x)
+            x = BatchNormalization(axis=-1)(x)
+            x = Activation("relu")(x)
+        else:
+            x = UpSampling2D(size=(2, 2))(x)
+            nb_filters = int(f / (2 ** (i + 1)))
+            x = Conv2D(nb_filters, (3, 3), padding="same")(x)
+            x = BatchNormalization(axis=1)(x)
+            x = Activation("relu")(x)
+            x = Conv2D(nb_filters, (3, 3), padding="same")(x)
+            x = Activation("relu")(x)
 
-    # x = Conv2D(
-    #     64, (3, 3), strides = (2,2),
-    #     name='conv_1',
-    #     kernel_initializer=weight_init)(input_image)
-    # x = LeakyReLU()(x)
-    # #x = BatchNormalization(axis=1)(x)
-    # x = MaxPool2D(pool_size=2)(x)
-    # #x = concat_diff(x)
+    # Last block
+    # s = start_dim * (2 ** (nb_upconv))
+    # o_shape = (batch_size, s, s, output_channels)
+    # x = Deconv2D(output_channels, (3, 3), output_shape=o_shape, strides=(2, 2), padding="same")(x)
+    x = Conv2D(output_channels, (3, 3), name="gen_Conv2D_final", padding="same", activation='tanh')(x)
 
-    # x = Conv2D(
-    #     128, (3, 3),
-    #     name='conv_2',
-    #     kernel_initializer=weight_init)(x)
-    # x = MaxPool2D(pool_size=1)(x)
-    # #x = BatchNormalization(axis=1)(x)
-    # x = LeakyReLU()(x)
-    # #x = concat_diff(x)
+    #Residual cell
+    shortcut = x
+    x = Conv2D(output_channels, kernel_size=(3, 3), strides=(1,1), padding='same')(x)
+    x = BatchNormalization(axis=-1)(x)
+    x = LeakyReLU(0.2)(x)
 
-    # x = Conv2D(
-    #     256, (3, 3), strides = (2,2),
-    #     name='conv_3',
-    #     kernel_initializer=weight_init)(x)
-    # x = LeakyReLU()(x)
-    # #x = BatchNormalization(axis=1)(x)
-    # x = MaxPool2D(pool_size=2)(x)
-    # #x = concat_diff(x)
+    x = Conv2D(output_channels, kernel_size=(3, 3), strides=(1, 1), padding='same')(x)
+    x = BatchNormalization(axis=-1)(x)
+    x = LeakyReLU(0.2)(x)
 
-    # x = Conv2D(
-    #     512, (3, 3),
-    #     name='conv_4',
-    #     kernel_initializer=weight_init)(x)
-    # x = LeakyReLU()(x)
-    # #x = BatchNormalization(axis=1)(x)
-    # x = MaxPool2D(pool_size=1)(x)
-    # #x = concat_diff(x)
+    x = add([shortcut, x])
+    x = Activation("tanh")(x)
 
-    # x = Conv2D(1, (3, 3), name="last_conv", padding="same", use_bias=False,
-    #         kernel_initializer=RandomNormal(stddev=0.02))(x)
-    # # Average pooling
-    # x = GlobalAveragePooling2D()(x)
-    
-    # return Model(
-    #     inputs=[input_image], outputs=[x], name='D')
-    img_dim = (128, 128, 3)
+    generator_model = Model(inputs=[gen_input], outputs=[x], name='G')
+    return generator_model
+   
+def dis(input_shape): # discriminative network, 2
+    img_dim = input_shape
     bn_axis = -1
     min_s = min(img_dim[:-1])
+
     disc_input = Input(shape=img_dim, name="discriminator_input")
 
     # Get the list of number of conv filters
     # (first layer starts with 64), filters are subsequently doubled
     nb_conv = int(np.floor(np.log(min_s // 4) / np.log(2)))
-    list_f = [64 * min(8, (2 ** i)) for i in range(nb_conv)]
+    list_f = [128 * min(8, (2 ** i)) for i in range(nb_conv)]
 
     # First conv with 2x2 strides
     x = Conv2D(list_f[0], (3, 3), strides=(2, 2), name="disc_conv2d_1",
                padding="same", use_bias=False,
                kernel_initializer=RandomNormal(stddev=0.02))(disc_input)
-    #x = BatchNormalization(axis=bn_axis)(x)
+    x = BatchNormalization(axis=bn_axis)(x)
     x = LeakyReLU(0.2)(x)
+    x = concat_diff(x)
 
     # Conv blocks: Conv2D(2x2 strides)->BN->LReLU
     for i, f in enumerate(list_f[1:]):
         name = "disc_conv2d_%s" % (i + 2)
         x = Conv2D(f, (3, 3), strides=(2, 2), name=name, padding="same", use_bias=False,
                    kernel_initializer=RandomNormal(stddev=0.02))(x)
-        #x = BatchNormalization(axis=bn_axis)(x)
+        x = BatchNormalization(axis=bn_axis)(x)
         x = LeakyReLU(0.2)(x)
+        x = Dropout(0.2)(x)
+        x = concat_diff(x)
 
     # Last convolution
-    x = Conv2D(1, (3, 3), name="last_conv", padding="same", use_bias=False,
+    x = Conv2D(1, (2, 2), name="last_conv", padding="same", use_bias=False,
                kernel_initializer=RandomNormal(stddev=0.02))(x)
-    # Average pooling
-    x = GlobalAveragePooling2D()(x)
 
-    discriminator_model = Model(inputs=[disc_input], outputs=[x], name='D')
+    #x = Activation('linear')(x)
+    x = Activation('sigmoid')(x)
 
+    discriminator_model = Model(inputs=[disc_input], outputs=[x], name="D")
     return discriminator_model
 
 
-def create_G(Z_SIZE=Z_SIZE):
-    DICT_LEN = 10
-    EMBEDDING_LEN = Z_SIZE
+def gan(g, d, batch_size, wasserstein=False):
+    # initialize a GAN trainer
 
-    # weights are initlaized from normal distribution with below params
-    weight_init = RandomNormal(mean=0.0, stddev=0.1)
+    noise = Input(shape=g.input_shape[1:])
+    real_data = Input(shape=d.input_shape[1:])
 
-    # latent var
-    input_z = Input(shape=(Z_SIZE, ), name='input_z')
+    generated = g(noise)
+    gscore = d(generated)
+    rscore = d(real_data)
 
-     # Noise input and reshaping
-    x = Dense(8 * 8 * 512)(input_z)
-    x = Reshape((8,8,512))(x)
-    x = BatchNormalization(axis=-1)(x)
-    x = Activation("relu")(x)
+    def log_eps(i):
+        return K.log(i+1e-11)
 
-    for i in range(4):
-        x = UpSampling2D(size=(2, 2))(x)
-        nb_filters = int(512 / (2 ** (i + 1)))
-        x = Conv2D(nb_filters, (3, 3), padding="same", kernel_initializer=RandomNormal(stddev=0.02))(x)
-        x = BatchNormalization(axis=1)(x)
-        x = Activation("relu")(x)
-        x = Conv2D(nb_filters, (3, 3), padding="same", kernel_initializer=RandomNormal(stddev=0.02))(x)
-        x = Activation("relu")(x)
-
-    #x = UpSampling2D(size=(2, 2))(x)
-    x = Conv2D(
-        3, (3, 3),
-        padding='same',
-        activation='tanh',
-        name='output_generated_image',
-        kernel_initializer=weight_init)(x)
-
-    return Model(inputs=[input_z], outputs=x, name='G')
-    
-D  = create_D()
-
-D.compile(
-    optimizer=RMSprop(),
-    loss=[wasserstein])
-
-input_z = Input(shape=(Z_SIZE, ), name='input_z_')
-input_class = Input(shape=(1, ),name='input_class_', dtype='int32')
-
-
-
-G = create_G()
-
-# create combined D(G) model
-output_is_fake = D(G(inputs=[input_z]))
-DG = Model(inputs=[input_z], outputs=[output_is_fake])
-DG.get_layer('D').trainable = False # freeze D in generator training faze
-
-DG.compile(
-    optimizer=RMSprop(),
-    loss=[wasserstein]
-)
-
-# save 10x10 sample of generated images
-samples_z = np.random.normal(0., 1., (100, Z_SIZE))
-def generate_samples(n=0, save=True):
-
-    generated_classes = np.array(list(range(0, 10)) * 10)
-    generated_images = G.predict([samples_z])
-    index = np.random.choice(len(X_train), 100, replace=False)
-    real_images = X_train[index]
-    print(generated_images)
-
-    rr = []
-    for c in range(10):
-        rr.append(
-            np.concatenate(generated_images[c * 10:(1 + c) * 10]).reshape(
-                1280, 128, 3))
-    img = np.hstack(rr)
-    rr2 = []
-    for c in range(10):
-        rr.append(
-            np.concatenate(real_images[c * 10:(1 + c) * 10]).reshape(
-                1280, 128, 3))
-    img = np.hstack(rr)
-
-    if save:
-        plt.imsave(OUT_DIR + '/samples_real_%07d.png' % n, img)
-
-    return img
-       
-
-# fake = 1
-# real = -1
-
-progress_bar = Progbar(target=ITERATIONS)
-
-DG_losses = []
-D_true_losses = []
-D_fake_losses = []
-
-generate_samples(0)
-
-print("training...")
-for it in range(ITERATIONS):
-
-    print("Iteration:")
-    print(it)
-
-    if it < 1:
-        d_iters = 50
+    if wasserstein:
+        dloss = K.mean(rscore * -np.ones(batch_size)) + K.mean(gscore * np.ones(batch_size))
+        gloss = K.mean(gscore * -np.ones(batch_size))
     else:
-        d_iters = D_ITERS
+        dloss = - K.mean(log_eps(1-gscore) + .1 * log_eps(1-rscore) + .9 * log_eps(rscore))
+        gloss = - K.mean(log_eps(gscore))
 
-    for d_it in range(d_iters):
+    Adam = tf.train.AdamOptimizer
 
-        # unfreeze D
-        D.trainable = True
-        for l in D.layers: l.trainable = True
-            
-        # # restore D dropout rates
-        # for l in D.layers:
-        #     if l.name.startswith('dropout'):
-        #         l.rate = l._rate
+    lr,b1 = 2e-4,.2 # otherwise won't converge.
+    opt_discriminator = Adam(lr,beta1=b1)
+    opt_dcgan = Adam(lr,beta1=b1)
 
-        # clip D weights
+    grad_loss_wd = opt_discriminator.compute_gradients(dloss, d.trainable_weights)
+    update_wd = opt_discriminator.apply_gradients(grad_loss_wd)
+  
+    grad_loss_wg = opt_dcgan.compute_gradients(gloss, g.trainable_weights)
+    update_wg = opt_dcgan.apply_gradients(grad_loss_wg)
+ 
+    def get_internal_updates(model):
+        # get all internal update ops (like moving averages) of a model
+        inbound_nodes = model._inbound_nodes
+        input_tensors = []
+        for ibn in inbound_nodes:
+            input_tensors+= ibn.input_tensors
+        updates = [model.get_updates_for(i) for i in input_tensors]
+        return updates
 
-        for l in D.layers:
-            weights = l.get_weights()
-            weights = [np.clip(w, -0.001, 0.001) for w in weights]
-            l.set_weights(weights)
+    other_parameter_updates = [get_internal_updates(m) for m in [d,g]]
+    # those updates includes batch norm.
 
-        # 1.1: maximize D output on reals === minimize -1*(D(real))
+    print('other_parameter_updates for the models(mainly for batch norm):')
+    print(other_parameter_updates)
 
-        # draw random samples from real images
-        index = np.random.choice(len(X_train), BATCH_SIZE, replace=False)
-        real_images = X_train[index]
-        print(real_images.shape)
-        print("training discriminator on real images")
-        D_loss = D.fit(real_images, [-np.ones(BATCH_SIZE)])
+    train_step = [update_wd, update_wg, other_parameter_updates]
+    losses = [dloss,gloss]
 
-        # 1.2: minimize D output on fakes 
-        zz = np.random.normal(0., 1., (BATCH_SIZE, Z_SIZE))
-        generated_images = G.predict([zz])
-        print("training discriminator on fake images")
-        D_loss = D.fit(generated_images, [np.ones(BATCH_SIZE)])
+    learning_phase = K.learning_phase()
 
-    # 2: train D(G) (D is frozen)
-    # minimize D output while supplying it with fakes, telling it that they are reals (-1)
-
-    # freeze D
-    D.trainable = False
-    for l in D.layers: l.trainable = False
+    def gan_feed(sess, batch_image,z_input, iteration):
+        # actual GAN trainer
+        nonlocal train_step,losses,noise,real_data,learning_phase, update_wd, update_wg, other_parameter_updates
         
-    # # disable D dropout layers
-    # for l in D.layers:
-    #     if l.name.startswith('dropout'):
-    #         l.rate = 0.
+        if (iteration % 3 == 0 and iteration > 700):
+             train_step = [update_wd, update_wg, other_parameter_updates]
+        else:
+            train_step = [update_wd, other_parameter_updates]
+        res = sess.run([train_step,losses],feed_dict={
+        noise:z_input,
+        real_data:batch_image,
+        learning_phase:True,
+        # Keras layers needs to know whether
+        # this run is training or testring (you know, batch norm and dropout)
+        })
 
+        loss_values = res[1]
+        return loss_values #[dloss,gloss]
 
-    print("training generator")
-
-    for i in range(G_ITERS):
-        zz = np.random.normal(0., 1., (BATCH_SIZE, Z_SIZE)) 
-        DG_loss = DG.fit(
-            [zz],
-            [-np.ones(BATCH_SIZE)])
-
-
-    generate_samples(it, save=True)
+    return gan_feed
