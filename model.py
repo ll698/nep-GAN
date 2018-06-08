@@ -15,7 +15,7 @@ import keras.backend as K
 
 import numpy as np
 
-zed = 1024
+zed = 256
 
 def concat_diff(i): # batch discrimination -  increase generation diversity.
     # return i
@@ -24,17 +24,20 @@ def concat_diff(i): # batch discrimination -  increase generation diversity.
     return i
 
 
-def residual_cell(input):
-    x = Conv2D(3, kernel_size=(3, 3), strides=(1,1), padding='same')(input)
+def residual_cell(input_shape):
+    input = Input(shape=input_shape, name="generator_input")
+    x = Conv2D(input_shape[2]*2, kernel_size=(3, 3), strides=(1,1), padding='same')(input)
     x = BatchNormalization(axis=-1)(x)
     x = LeakyReLU(0.2)(x)
 
-    x = Conv2D(3, kernel_size=(3, 3), strides=(1, 1), padding='same')(x)
+    x = Conv2D(input_shape[2], kernel_size=(3, 3), strides=(1, 1), padding='same')(x)
     x = BatchNormalization(axis=-1)(x)
     x = LeakyReLU(0.2)(x)
 
     x = add([input, x])
-    return x
+
+    res_cell = Model(inputs=[input], outputs=[x])
+    return res_cell
 
 def gen(input_shape, f, batch_size, upsampling=True): # generative network, 2
     s = input_shape[1]
@@ -86,33 +89,39 @@ def gen(input_shape, f, batch_size, upsampling=True): # generative network, 2
                         kernel_initializer=RandomNormal(stddev=0.02))(x)
         x = Activation("tanh")(x)
 
-   
-    #Residual cell
-    shortcut = x
-
-    x = Conv2D(output_channels, kernel_size=(3, 3), strides=(1, 1), padding='same')(x)
-    x = BatchNormalization(axis=-1)(x)
-    x = LeakyReLU(0.2)(x)
-
-    x = add([shortcut, x])
-    x = Activation("tanh")(x)
-
     generator_model = Model(inputs=[gen_input], outputs=[x], name='G')
     return generator_model
 
 
 
-def upsample_gen(input_shape):
+def upsample_gen(input_shape, output_shape, batch_size):
 
     gen_input = Input(shape=input_shape, name="generator_input")
-    x = UpSampling2D(size=(2, 2))(gen_input)
-    x = Conv2D(3, (3, 3), padding="same")(x)
+    # x = UpSampling2D(size=(2, 2))(gen_input)
+    # x = Conv2D(3, (3, 3), padding="same")(x)
+    # x = BatchNormalization(axis=1)(x)
+    # x = LeakyReLU(0.2)(x)
+    res1 = residual_cell(input_shape)
+    res2 = residual_cell((128, 128, 12))
+    # x = Conv2D(3, (3, 3), name="gen_Conv2D_final", padding="same", activation='tanh')(x)
+    x = res1(gen_input)
+    x = UpSampling2D(size=(2, 2))(x)
+            
+    x = Conv2D(24, (3, 3), padding="same", kernel_initializer=RandomNormal(stddev=0.02))(x)
     x = BatchNormalization(axis=1)(x)
-    x = LeakyReLU(0.2)(x)
-    x = residual_cell(x)
-    x = residual_cell(x)
-    x = Conv2D(3, (3, 3), name="gen_Conv2D_final", padding="same", activation='tanh')(x)
+    x = Activation("relu")(x)
+    x = Conv2D(12, (3, 3), padding="same", kernel_initializer=RandomNormal(stddev=0.02))(x)
+    x = Activation("relu")(x)
+
+    x = res2(x)
+    x = Conv2D(6, kernel_size=(3, 3), strides=(2, 2), padding='same')(x)
+    x = Conv2D(3, (3, 3), name="gen_conv2d_final",
+                padding="same", activation='tanh', kernel_initializer=RandomNormal(stddev=0.02))(x)
+    
+
     upsample_model = Model(inputs=[gen_input], outputs=[x], name='U')
+
+
     return upsample_model
 
     
@@ -151,22 +160,29 @@ def dis(input_shape): # discriminative network, 2
     x = Conv2D(1, (2, 2), name="last_conv", padding="same", use_bias=False,
                kernel_initializer=RandomNormal(stddev=0.02))(x)
 
-    #x = Activation('linear')(x)
+    x = Activation('linear')(x)
     x = Activation('sigmoid')(x)
 
     discriminator_model = Model(inputs=[disc_input], outputs=[x], name="D")
     return discriminator_model
 
 
-def gan(g, d, batch_size, wasserstein=False):
+def gan(g, d, batch_size, ups=None, d_ups=None, upsample=False, wasserstein=False):
     # initialize a GAN trainer
 
     noise = Input(shape=g.input_shape[1:])
-    real_data = Input(shape=d.input_shape[1:])
+    real_data_64 = Input(shape=d.input_shape[1:])
+    real_data_128 = Input(shape=d.input_shape[1:])
 
     generated = g(noise)
     gscore = d(generated)
-    rscore = d(real_data)
+    rscore = d(real_data_64)
+
+    if upsample:
+        ups_generated = ups(generated)
+        ups_score = d_ups(ups_generated)
+        d_ups_score = d_ups(real_data_128)
+
 
     def log_eps(i):
         return K.log(i+1e-11)
@@ -174,21 +190,39 @@ def gan(g, d, batch_size, wasserstein=False):
     if wasserstein:
         dloss = K.mean(rscore * -np.ones(batch_size)) + K.mean(gscore * np.ones(batch_size))
         gloss = K.mean(gscore * -np.ones(batch_size))
+        
+        if upsample:
+            d_ups_loss = K.mean(d_ups_score * -np.ones(batch_size)) + K.mean(ups_score * np.ones(batch_size))
+            ups_loss = K.mean(ups_score * -np.ones(batch_size))
     else:
         dloss = - K.mean(log_eps(1-gscore) + .1 * log_eps(1-rscore) + .9 * log_eps(rscore))
         gloss = - K.mean(log_eps(gscore))
 
+        if upsample:
+            ups_loss = - K.mean(log_eps(ups_score))
+            d_ups_loss = - K.mean(log_eps(1-ups_score) + .1 * log_eps(1-d_ups_score) + .9 * log_eps(d_ups_score))
+
+
     Adam = tf.train.AdamOptimizer
 
     lr,b1 = 2e-4,.2 # otherwise won't converge.
-    opt_discriminator = Adam(lr,beta1=b1)
-    opt_dcgan = Adam(lr,beta1=b1)
+    opt_dis = Adam(lr,beta1=b1)
+    opt_gen = Adam(lr,beta1=b1)
+    opt_ups = Adam(lr, beta1=b1)
+    opt_ups_dis = Adam(lr, beta1=b1)
 
-    grad_loss_wd = opt_discriminator.compute_gradients(dloss, d.trainable_weights)
-    update_wd = opt_discriminator.apply_gradients(grad_loss_wd)
+    grad_loss_wd = opt_dis.compute_gradients(dloss, d.trainable_weights)
+    update_wd = opt_dis.apply_gradients(grad_loss_wd)
   
-    grad_loss_wg = opt_dcgan.compute_gradients(gloss, g.trainable_weights)
-    update_wg = opt_dcgan.apply_gradients(grad_loss_wg)
+    grad_loss_wg = opt_gen.compute_gradients(gloss, g.trainable_weights)
+    update_wg = opt_gen.apply_gradients(grad_loss_wg)
+
+    if upsample:
+        grad_loss_ups_d = opt_ups_dis.compute_gradients(d_ups_loss, d_ups.trainable_weights)
+        update_w_ups_d = opt_ups_dis.apply_gradients(grad_loss_ups_d)
+
+        grad_loss_ups = opt_ups.compute_gradients(ups_loss, ups.trainable_weights)
+        update_w_ups = opt_ups.apply_gradients(grad_loss_ups)
  
     def get_internal_updates(model):
         # get all internal update ops (like moving averages) of a model
@@ -200,6 +234,8 @@ def gan(g, d, batch_size, wasserstein=False):
         return updates
 
     other_parameter_updates = [get_internal_updates(m) for m in [d,g]]
+    if upsample:
+        other_parameter_updates = [get_internal_updates(m) for m in [d,g,ups, d_ups]]
     # those updates includes batch norm.
 
     print('other_parameter_updates for the models(mainly for batch norm):')
@@ -208,19 +244,28 @@ def gan(g, d, batch_size, wasserstein=False):
     train_step = [update_wd, update_wg, other_parameter_updates]
     losses = [dloss,gloss]
 
+    if upsample:
+        train_step = [update_wd, update_wg, update_w_ups, other_parameter_updates]
+        losses = [dloss, gloss, ups_loss, d_ups_loss]
+
     learning_phase = K.learning_phase()
 
-    def gan_feed(sess, batch_image,z_input, iteration):
+    def gan_feed(sess, batch_image_64, batch_image_128, z_input, iteration):
         # actual GAN trainer
-        nonlocal train_step,losses,noise,real_data,learning_phase, update_wd, update_wg, other_parameter_updates
+        nonlocal train_step,losses,noise,real_data_64, real_data_128
+        nonlocal learning_phase, update_wd, update_wg, update_w_ups, update_w_ups_d, upsample, other_parameter_updates
         
-        if (iteration % 3 == 0 and iteration > 700):
-             train_step = [update_wd, update_wg, other_parameter_updates]
-        else:
-            train_step = [update_wd, other_parameter_updates]
+        # if (iteration % 3 == 0 and iteration > 700):
+        #     if upsample:
+        train_step = [update_wd, update_wg, update_w_ups, update_w_ups_d, other_parameter_updates]
+        #     train_step = [update_wd, update_wg, other_parameter_updates]
+        # else:
+        #     train_step = [update_wd, other_parameter_updates]
+
         res = sess.run([train_step,losses],feed_dict={
         noise:z_input,
-        real_data:batch_image,
+        real_data_64:batch_image_64,
+        real_data_128:batch_image_128,
         learning_phase:True,
         # Keras layers needs to know whether
         # this run is training or testring (you know, batch norm and dropout)
@@ -230,3 +275,4 @@ def gan(g, d, batch_size, wasserstein=False):
         return loss_values #[dloss,gloss]
 
     return gan_feed
+

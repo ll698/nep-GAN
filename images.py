@@ -6,8 +6,9 @@ import glob
 from PIL import Image
 
 
-zed = 100
+zed = 256
 OUT_DIR = 'out/imgs' 
+OUT_DIR_UPS = 'out/ups/imgs'
 samples_z_const = np.random.normal(0., 0., (100, zed))
 
 def load_images(filepath):
@@ -30,16 +31,17 @@ def get_batch(X_train, datagen, batch_size, length):
     return minibatch
     #minibatch = minibatch[0]
 
-def show(count, gm, num_samples, input_shape, save=True):
+def show(count, gm, num_samples, input_shape, ups=None, upsample=True, save=True):
     samples_z = np.random.normal(0., 1., (num_samples, zed))
     generated_images = gm.predict([samples_z])
-    generated_images_const = gm.predict([samples_z_const])
+    generated_images_ups = ups([gm.predict([samples_z])])
+    
 
     #rescale_images
     generated_images += 1
     generated_images /= 2
-    generated_images_const += 1
-    generated_images_const /= 2
+    generated_images_ups += 1
+    generated_images_ups /= 2
 
     rr = []
     for c in range(10):
@@ -51,13 +53,15 @@ def show(count, gm, num_samples, input_shape, save=True):
     rr1 = []
     for c in range(10):
         rr1.append(
-            np.concatenate(generated_images_const[c * 10:(1 + c) * 10]).reshape(
-                input_shape[0] * 10, input_shape[1], 3))
-    img_same = np.hstack(rr1)
+            np.concatenate(generated_images_ups[c * 10:(1 + c) * 10]).reshape(
+                input_shape[0]* 2 * 10, input_shape[1]*2, 3))
+    img_ups = np.hstack(rr1)
+
     if save:
         plt.imshow(img)
+        plt.imshow(img_ups)
         plt.imsave(OUT_DIR + '/samples_real_%07d.png' % count, img)
-        plt.imsave('out/const' + '/samples_real_%07d.png' % count, img_same)
+        plt.imsave(OUT_DIR_UPS + '/samples_real_%07d.png' % count, img_ups)
         count += 1
 
     return img
