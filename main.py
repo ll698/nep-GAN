@@ -38,6 +38,7 @@ if __name__ == '__main__':
     dis_model.summary()
     print('Upsampler...')
     ups_gen_model.summary()
+    
 
     sess = K.get_session()
     for i in range(ep):
